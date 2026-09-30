@@ -347,19 +347,67 @@ verbosity bias và self-preference bằng cách nào?
 Chỉ làm sau khi hoàn thành 3.1–3.3. Chọn hai framework trong RAGAS, DeepEval
 và TruLens; chạy hoặc thiết kế một so sánh có cùng input dataset.
 
-| Tiêu chí | Framework 1: ____ | Framework 2: ____ |
+**Phương pháp (đã chạy thật):** script `bonus/framework_compare.py` (tách riêng,
+không import vào `template.py`; `ragas`/`deepeval` không thêm vào
+`requirements.txt`). Cùng input cho cả hai framework: 8 cases (E01, M03 làm
+đối chứng tốt; M02, H01, H02, A01, A02, A03 là các case lỗi) với `question`,
+`expected_answer` từ `golden_dataset.json` và `actual_answer` + top-5
+`retrieved_contexts` từ `artifacts/actual_answers.json`. Judge:
+`deepseek/deepseek-chat` qua OpenRouter — khác model family với generator
+(gpt-4o-mini) để giảm self-preference. Kết quả thô: `artifacts/framework_comparison.json`.
+
+Metrics ghép cặp: Faithfulness ↔ Faithfulness; Context Recall ↔ Contextual Recall;
+RAGAS FactualCorrectness (F1 theo claim) ↔ DeepEval GEval "Correctness" (4 evaluation
+steps: đúng kết luận, phạt sai số/ngày/ngưỡng/policy version, phạt false premise,
+thông tin thừa không cộng điểm).
+
+| ID | Faith heur | Faith RAGAS | Faith DeepEval | Recall heur | Recall RAGAS | Recall DeepEval | Complete heur | FactCorr RAGAS | GEval DeepEval |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| E01 | 0.900 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 0.900 | 1.000 | 1.000 |
+| M03 | 0.818 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 0.900 | 1.000 | 1.000 |
+| M02 | 0.091 | 0.400 | 1.000 | 0.200 | 0.000 | 0.000 | 0.171 | 0.250 | 0.400 |
+| H01 | 0.458 | 0.000 | 1.000 | 0.778 | 1.000 | 1.000 | 0.306 | 0.200 | 0.200 |
+| H02 | 0.227 | 0.500 | 1.000 | 0.565 | 1.000 | 1.000 | 0.783 | 0.670 | 0.400 |
+| A01 | 0.125 | 1.000 | 1.000 | 0.333 | 0.500 | 0.500 | 0.167 | 0.670 | 0.400 |
+| A02 | 0.500 | 1.000 | 1.000 | 0.656 | 0.500 | 0.500 | 0.188 | 0.440 | 0.700 |
+| A03 | 0.333 | 0.000 | 0.333 | 0.650 | 1.000 | 1.000 | 0.350 | 0.000 | 0.000 |
+
+| Tiêu chí | Framework 1: RAGAS 0.4.3 | Framework 2: DeepEval 4.2.7 |
 |---|---|---|
-| Setup complexity | | |
-| Metrics available | | |
-| CI/CD integration | | |
-| Kết quả trên cùng dataset | | |
-| Insight rút ra | | |
+| Setup complexity | Cao. `pip install ragas` **fail trên Python 3.14** (dependency `scikit-network` không có wheel, chỉ dùng cho testset generation) → phải cài `--no-deps` + tự cài deps; `langchain-community` 0.4 đã xóa module ragas import → phải hạ về 0.3.x. API mới dạng async (`await metric.ascore(...)`), `ragas.metrics` bị deprecate sang `ragas.metrics.collections`. | Thấp–trung bình. `pip install deepeval` chạy thẳng, nhưng kéo theo nhiều pytest plugin và pin `click<8.4` gây conflict với `huggingface-hub`. API đồng bộ `metric.measure(test_case)`, trỏ sang OpenRouter chỉ cần `GPTModel(model, api_key, base_url)`. Phải tắt telemetry (`DEEPEVAL_TELEMETRY_OPT_OUT`). |
+| Metrics available | Rất nhiều metric RAG chuyên biệt: Faithfulness, ContextRecall/Precision, NoiseSensitivity, FactualCorrectness, ResponseGroundedness, rubric-based scores… AnswerRelevancy cần embeddings. | Faithfulness, Contextual Recall/Precision/Relevancy, Hallucination, Bias, Toxicity, và **GEval** — metric tùy biến theo criteria/evaluation steps, dễ gắn rubric domain (Exercise 3.3). Mỗi score có `reason` giải thích. |
+| CI/CD integration | Không có test runner riêng; dùng `evaluate()` hoặc metric trong pytest rồi tự viết assert theo ngưỡng. | Tích hợp sẵn pytest: `assert_test(test_case, [metrics])`, `deepeval test run`, mỗi metric có `threshold` → dùng trực tiếp làm quality gate. |
+| Kết quả trên cùng dataset | Faithfulness phân biệt tốt: H01 = 0.0, A03 = 0.0 (claim không có support bị tính là unfaithful). FactualCorrectness bắt H01 (0.2), A03 (0.0) nhưng H02 vẫn 0.67 vì phần lớn claim đúng. Thời gian ~44 s/case. | Faithfulness gần như luôn 1.0 (7/8 cases) kể cả H01/H02 sai. GEval bắt đúng mọi lỗi quyết định: H01 0.2, H02 0.4, A03 0.0, và chấm A02 (refusal đúng) 0.7. Thời gian ~45 s/case. |
+| Insight rút ra | Faithfulness claim-level của RAGAS là tín hiệu hallucination đáng tin nhất trong 3 cách đo. | GEval với evaluation steps domain-specific là metric "correctness" tốt nhất; Faithfulness mặc định của DeepEval quá dễ dãi để làm gate. |
 
 - Scores có nhất quán không?
 - Framework nào strict hơn và vì sao?
 - Hai framework có tìm ra cùng failure cases không?
 
 > *Phân tích:*
+>
+> - **Nhất quán:** Context Recall của hai framework **trùng khớp 8/8 cases** —
+>   cả hai cùng xác nhận M02 = 0.0 (retriever bỏ sót evidence), còn H01/H02 = 1.0
+>   (retrieval đủ, lỗi nằm ở generation). Điều này củng cố kết luận của reflection.
+>   Hai case đối chứng tốt (E01, M03) được cả hai chấm 1.0 ở mọi metric. Faithfulness
+>   thì **không** nhất quán: RAGAS 0.0 vs DeepEval 1.0 ở H01.
+> - **Strict hơn:** với Faithfulness, **RAGAS strict hơn** vì tính tỉ lệ claim
+>   *được context hỗ trợ*; DeepEval chỉ phạt claim *mâu thuẫn* với context, nên câu
+>   suy luận sai (H01 "45 ngày", H02 "288 meets 300") không bị coi là mâu thuẫn và
+>   vẫn đạt 1.0. Với correctness, **GEval strict hơn ở lỗi quyết định** (H02: 0.4 so
+>   với 0.67 của FactualCorrectness, vì F1 theo claim vẫn cộng điểm cho các claim phụ
+>   đúng), nhưng rộng tay hơn với refusal đúng (A02: 0.7 so với 0.44).
+> - **Failure cases:** hai framework LLM **cùng xếp A03 và H01 là tệ nhất**
+>   (correctness 0.0–0.2) — khác hẳn heuristic token overlap của lab, vốn xếp M02,
+>   A02, A01 là tệ nhất và cho A03 (0.415), H01 (0.429) điểm cao hơn cả hai refusal
+>   đúng. Heuristic còn đánh giá quá cao Recall của M02 (0.2 so với 0.0 thật) vì đếm
+>   các từ chung chung. Tức là LLM-based metrics tìm ra đúng nhóm "sai nhưng tự tin"
+>   (Cluster 1 trong `reflection.md`) mà metric lexical bỏ sót.
+> - **Khuyến nghị cho OrbitTech:** dùng RAGAS Faithfulness + Context Recall để chẩn
+>   đoán retrieval/hallucination, và DeepEval GEval với rubric 3.3 làm quality gate
+>   trong CI; tránh dùng DeepEval Faithfulness mặc định làm gate. Hạn chế: mẫu chỉ
+>   8 cases, một judge duy nhất, LLM judge có biến động giữa các lần chạy — cần chạy
+>   lặp và calibrate với human labels trước khi dùng thật.
 
 ### Exercise 3.5 — Retrieval Reranking (Bonus +5)
 
@@ -441,4 +489,4 @@ Hoàn thành kiểm tra cuối trong khoảng 16:50–17:00.
 - [x] Exercise 3.3 có rubric 1–5 và bias controls.
 - [x] `reflection.md` có ba failure analyses và regression strategy.
 - [x] Đã copy `template.py` thành `solution/solution.py`.
-- [x] Exercise 3.5 (bonus) hoàn thành; Exercise 3.4 không làm.
+- [x] Exercise 3.4 và 3.5 (bonus) hoàn thành.
